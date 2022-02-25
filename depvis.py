@@ -3,6 +3,8 @@
 import os
 import pprint
 import re
+import sys
+import subprocess
 
 
 class DirWalker:
@@ -14,12 +16,13 @@ class DirWalker:
 
 
 class GraphFromDirectory:
-    def __init__(self):
+    def __init__(self, generate_root=True):
         self.dir_walker_ = DirWalker()
         self.edges_ = dict()
         self.nodes_ = dict()
         self.root_nodes_ = []
         self.next_id_ = 0
+        self.generate_root_ = generate_root
 
     def set_dir_walker(self, dir_walker):
         self.dir_walker_ = dir_walker
@@ -58,8 +61,16 @@ class GraphFromDirectory:
             self.edges_[from_node] = node_ref
 
             # the nodes dict points from node_ids to node info
-            self.nodes_[from_node] = {"name": from_, "path": common_path + os.sep + from_path}
-            self.nodes_[to_node] = {"name": to_, "path": common_path + os.sep + to_path}
+            self.nodes_[from_node] = {
+                "name": from_,
+                "path": common_path + os.sep + from_path,
+                "rank": len(from_path.split(os.sep)),
+            }
+            self.nodes_[to_node] = {
+                "name": to_,
+                "path": common_path + os.sep + to_path,
+                "rank": len(to_path.split(os.sep)),
+            }
 
     def add_dir(self, dir_name, ignore_contains):
         common_path, root_path = os.path.split(dir_name)
@@ -89,18 +100,48 @@ class GraphFromDirectory:
         local_edges = dict(self.edges_)
         local_nodes = dict(self.nodes_)
 
-        root_node = "root"
+        if self.generate_root_:
+            root_node = "root"
 
-        local_edges.update({root_node: set(self.root_nodes_)})
-        local_nodes[root_node] = {"name": "root", "path": ".\\"}
+            local_edges.update({root_node: set(self.root_nodes_)})
+            local_nodes[root_node] = {"name": "root", "path": ".\\", "rank" : 0}
 
-        return root_node, local_edges, local_nodes
+        return local_edges, local_nodes
 
 
-def generate_dot_file(edges, nodes):
-    print("digraph D {")
-    print('size ="40,40!";')
-    print('rankdir="LR";')
+def traverse_dirgraph_dfs(edges, nodes, callback, startnode="root"):
+    nodes_not_visited = [startnode]
+    while len(nodes_not_visited) != 0:
+        node_id = nodes_not_visited.pop(0)
+
+        children = list(edges.get(node_id, set()))
+        children.sort()  # sort list because order in set is not defined
+        nodes_not_visited = children + nodes_not_visited
+
+        node = nodes[node_id]
+
+        result = callback(node_id, node)
+        nodes[node_id].update(result)
+
+
+def generate_dot_file(
+    edges, nodes, layout="dot", fontsize_rank= {}, nodesep=0.5, ranksep=0.5, size=(80, 80), file=sys.stdout
+):
+    print("graph D {", file=file)
+    print("layout = %s" % (layout), file=file)
+    # print("ranksep=6;", file=file)
+    # print("ratio=auto;", file=file)
+    # print("overlap=false", file=file)
+    print("nodesep=%f;" % nodesep, file=file)
+
+    if isinstance(ranksep, list):
+        list_str = " ".join([str(i) for i in ranksep])
+        print('ranksep="%s";' % (list_str), file=file)
+    else:
+        print('ranksep="%s";' % ranksep, file=file)
+
+    print('size ="%i, %i!";' % (size[0], size[1]), file=file)
+    print('rankdir="LR";', file=file)
     for k, i in nodes.items():
 
         if "occurences" in i:
@@ -124,68 +165,31 @@ def generate_dot_file(edges, nodes):
         else:
             text = ""
 
+        rank = i["rank"]
+        if rank in fontsize_rank:
+            fontsize = fontsize_rank[rank]
+        else:
+            fontsize = 20
         print(
-            "  %s [fillcolor=%s, shape=folder,style=filled, label=<<font point-size='20'><b>%s</b> [%i]</font>%s>]"
-            % (k, fillcolor, i["name"], occ, text)
+            "  %s [fillcolor=%s, shape=folder,style=filled, label=<<font point-size='%i'><b>%s</b> [%i]</font>%s>]"
+            % (k, fillcolor, fontsize, i["name"], occ, text),
+            file=file,
         )
 
     print()
     for k, v in edges.items():
-        print("  %s -> {%s}" % (k, ", ".join(v)))
+        print("  %s -- {%s}" % (k, ", ".join(v)), file=file)
 
-    print("}")
+    print("}", file=file)
 
 
-def search_occurences_in_dir(path, regex):
-    files = [
-        os.path.join(path, i)
-        for i in os.listdir(path)
-        if os.path.isfile(os.path.join(path, i))
-    ]
-
-    files_filtered = [i for i in files if ".cpp" in i or ".h" in i]
-    cnt = 0
-    occurences = []
-    for i in files_filtered:
-        with open(i, "r") as file:
-            data = file.read()
-
-        occ = len(regex.findall(data))
-        _, filename = os.path.split(i)
-        if occ > 0:
-            occurences.append("%s [%i]" % (filename, occ))
-
-        cnt += occ
-
-    return cnt, occurences
+def gengraph_png_from_dotfile(filename_dot, filename_png):
+    run_re = subprocess.run(
+        "dot.exe %s -T png -o %s" % (filename_dot, filename_png), capture_output=True
+    )
+    if run_re.returncode != 0:
+        raise Exception("Running dot.exe failed", run_re.stderr)
 
 
 if __name__ == "__main__":
-    ignore_contains = ["external"]
-    graph_from_dir = GraphFromDirectory()
-    graph_from_dir.add_dir(
-        "..\\edes\\checkout\\software\\1194_edes\\bsl", ignore_contains
-    )
-    graph_from_dir.add_dir(
-        "..\\edes\\checkout\\software\\1194_edes\\drivers", ignore_contains
-    )
-    graph_from_dir.add_dir(
-        "..\\edes\\checkout\\software\\1194_edes\\hal", ignore_contains
-    )
-
-    root_node, edges, nodes = graph_from_dir.get_graph()
-
-    regex = re.compile("drive_kernel::")
-    for k, v in nodes.items():
-
-        # root node should be omitted
-        if k == "root":
-            continue
-
-        path = v["path"]
-
-        cnt, occurences = search_occurences_in_dir(path, regex)
-        nodes[k].update({"occurences": cnt, "files": occurences})
-
-    # Write the dot file to stdout
-    generate_dot_file(edges, nodes)
+    pass
