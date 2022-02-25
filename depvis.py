@@ -1,4 +1,4 @@
-# This script visualizes the number of matching regular expressions of all .cpp and .h files in a directory tree via dot (graphhviz) 
+# This script visualizes the number of matching regular expressions of all .cpp and .h files in a directory tree via dot (graphhviz)
 
 import os
 import pprint
@@ -34,69 +34,58 @@ class GraphFromDirectory:
             nodes[name] = vertex_name
             return nodes[name]
 
-    def __extract_edges_from_path(self, path, path_to_nodes, nodes):
-        path_components = path.split(os.sep)
-        edges = dict()
+    def __append_edges_from_path(self, common_path, reduced_path, reduced_path_to_node):
+        reduced_path_comp = reduced_path.split(os.sep)
+
         for i in zip(
-            range(0, len(path_components) - 1), range(1, len(path_components))
+            range(0, len(reduced_path_comp) - 1), range(1, len(reduced_path_comp))
         ):
-            # Get Components of path
-            from_ = path_components[i[0]]
-            to_ = path_components[i[1]]
+            # Get Components of reduced_path
+            from_ = reduced_path_comp[i[0]]
+            to_ = reduced_path_comp[i[1]]
 
             # Rebuild the path which has the component as its last element
-            from_path = os.sep.join(path_components[0 : i[0] + 1])
-            to_path = os.sep.join(path_components[0 : i[1] + 1])
+            from_path = os.sep.join(reduced_path_comp[0 : i[0] + 1])
+            to_path = os.sep.join(reduced_path_comp[0 : i[1] + 1])
 
             # Get unique node ids for each path
-            from_node = self.__get_node(from_path, path_to_nodes)
-            to_node = self.__get_node(to_path, path_to_nodes)
+            from_node = self.__get_node(from_path, reduced_path_to_node)
+            to_node = self.__get_node(to_path, reduced_path_to_node)
 
-            # Store
-            edges[from_node] = set([to_node])
+            # Load/Modify/Store
+            node_ref = self.edges_.get(from_node, set())
+            node_ref.add(to_node)
+            self.edges_[from_node] = node_ref
 
             # the nodes dict points from node_ids to node info
-            nodes[from_node] = {"name": from_, "path": from_path}
-            nodes[to_node] = {"name": to_, "path": to_path}
-
-        return edges
-
-    def __update_edges(self, edges, additional_edges):
-        edges_cpy = dict(edges)
-        for k, v in additional_edges.items():
-            if k in edges:
-                edges_cpy[k].update(v)
-            else:
-                edges_cpy[k] = v
-        return edges_cpy
+            self.nodes_[from_node] = {"name": from_, "path": common_path + os.sep + from_path}
+            self.nodes_[to_node] = {"name": to_, "path": common_path + os.sep + to_path}
 
     def add_dir(self, dir_name, ignore_contains):
         common_path, root_path = os.path.split(dir_name)
-        path_to_nodes = dict()
+        reduced_path_to_node = dict()
 
         for root, dirs, files in self.dir_walker_.walk(dir_name, topdown=False):
             # only iterate the directories
             for act_dir in dirs:
-                root_stripped = root.replace(common_path + os.sep, "")
-                path = os.path.join(root_stripped, act_dir)
+                root_reduced = root.replace(common_path + os.sep, "")
+                reduced_path = os.path.join(root_reduced, act_dir)
 
                 ignore = False
                 for i in ignore_contains:
-                    if i in path:
+                    if i in reduced_path:
                         ignore = True
 
                 if ignore:
                     continue
 
-                edges_of_path = self.__extract_edges_from_path(
-                    path, path_to_nodes, self.nodes_
+                edges_of_path = self.__append_edges_from_path(
+                    common_path, reduced_path, reduced_path_to_node
                 )
-                self.edges_ = self.__update_edges(self.edges_, edges_of_path)
 
-        self.root_nodes_.append(path_to_nodes[root_path])
+        self.root_nodes_.append(reduced_path_to_node[root_path])
 
     def get_graph(self):
-
         local_edges = dict(self.edges_)
         local_nodes = dict(self.nodes_)
 
@@ -133,7 +122,7 @@ def generate_dot_file(edges, nodes):
             else:
                 text = ""
         else:
-            text=""
+            text = ""
 
         print(
             "  %s [fillcolor=%s, shape=folder,style=filled, label=<<font point-size='20'><b>%s</b> [%i]</font>%s>]"
@@ -148,8 +137,6 @@ def generate_dot_file(edges, nodes):
 
 
 def search_occurences_in_dir(path, regex):
-    path = ".." + os.sep + ".." + os.sep + path
-
     files = [
         os.path.join(path, i)
         for i in os.listdir(path)
@@ -176,14 +163,21 @@ def search_occurences_in_dir(path, regex):
 if __name__ == "__main__":
     ignore_contains = ["external"]
     graph_from_dir = GraphFromDirectory()
-    graph_from_dir.add_dir("..\\..\\bsl", ignore_contains)
-    graph_from_dir.add_dir("..\\..\\drivers", ignore_contains)
-    graph_from_dir.add_dir("..\\..\\hal", ignore_contains)
+    graph_from_dir.add_dir(
+        "..\\edes\\checkout\\software\\1194_edes\\bsl", ignore_contains
+    )
+    graph_from_dir.add_dir(
+        "..\\edes\\checkout\\software\\1194_edes\\drivers", ignore_contains
+    )
+    graph_from_dir.add_dir(
+        "..\\edes\\checkout\\software\\1194_edes\\hal", ignore_contains
+    )
 
     root_node, edges, nodes = graph_from_dir.get_graph()
 
     regex = re.compile("drive_kernel::")
     for k, v in nodes.items():
+
         # root node should be omitted
         if k == "root":
             continue
